@@ -1,3 +1,4 @@
+const { request } = require("express");
 const express = require("express");
 const { v4:uuidv4 } = require("uuid")
 
@@ -13,41 +14,139 @@ const costumers = [];
  * id - uuid
  * statement []
  */
-app.post("/account", (req, res) => {
-    const {cpf, name } = req.body;
+
+// Middleware
+function verifyIfExistsAccountCPF(request, response, next) {
+    const { cpf } = request.headers;
+
+    const costumer = costumers.find((costumer) => costumer.cpf === cpf);
+
+    if(!costumer){
+        return response.status(400).json({error: "Costumer not found!"})
+    }
+
+    request.costumer = costumer;
+
+    return next();
+};
+
+function getBalance(statement){
+    const balance = statement.reduce((acc, operation) => {
+        if(operation.type === 'credit'){
+            return acc + operation.amount;
+        }else{
+            return acc - operation.amount;
+        }
+    }, 0);
+
+    return balance;
+}
+
+app.get("/statement", verifyIfExistsAccountCPF, (request, response) => {
+    const { costumer } = request;
+
+    return response.json(costumer.statement);
+});
+
+app.get("/statement/date", verifyIfExistsAccountCPF, (request, response) => {
+    const { costumer } = request;
+    const { date } = request.query;
+
+    const dateFormat = new Date(date + " 00:00");
+
+    const statement = costumer.statement.filter(
+        (statement) => statement.created_at.toDateString() === new Date(dateFormat).toDateString()
+    );
+    return response.json(statement);
+});
+
+app.get("/account", verifyIfExistsAccountCPF, (request, response) => {
+    const { costumer } = request;
+
+    return response.json(costumer);
+});
+
+app.get("/balance", verifyIfExistsAccountCPF, (request, response) => {
+    const{ costumer } = request;
+
+    const balance = getBalance(costumer.statement);
+
+    return response.json(balance);
+});
+
+app.post("/deposit", verifyIfExistsAccountCPF, (request, response) => {
+    const {description, amount} = request.body;
+
+    const { costumer } = request;
+    const statementOperation = {
+        description,
+        amount,
+        created_at: new Date(),
+        type: "credit"
+    }
+   costumer.statement.push(statementOperation);
+   
+    return response.status(201).send();
+});
+
+app.post("/account", (request, response) => {
+    const {cpf, name } = request.body;
 
     const costumerAlreadyExists = costumers.some(
         (costumer) => costumer.cpf === cpf
     )
 
     if(costumerAlreadyExists){
-        return res.status(400).json({error: "Costumer already exists!"})
+        return response.status(400).json({error: "Costumer already exists!"})
     }
-
-   
 
     costumers.push({
         cpf,
         name,
         id: uuidv4(),
-        statement: ["teste"]
+        statement: []
     })
-    return res.status(201).send();
+    return response.status(201).send();
 });
 
-app.get("/statement", (req, res) => {
-    const { cpf } = req.headers;
+app.post("/withdraw",  verifyIfExistsAccountCPF, (request, response) => {
+    const { amount } = request.body;
+    const { costumer } = request;
+    const balance = getBalance(costumer.statement);
 
-    const costumer = costumers.find((costumer) => costumer.cpf === cpf);
-
-    if(!costumer){
-        return res.status(400).json({error: "Costumer not found!"})
+    if(balance < amount){
+        return response.status(400).json({error: "Insufficient funds!"})
     }
-    return res.json(costumer.statement);
+
+    const statementOperation = {
+        amount,
+        created_at: new Date(),
+        type: "debit"
+    }
+
+    costumer.statement.push(statementOperation);
+
+    return response.status(201).send();
+
+});
+
+app.put("/account", verifyIfExistsAccountCPF, (request, response) => {
+    const { name } = request.body;
+    const { costumer } = request;
+
+    costumer.name = name;
+
+    return response.status(201).send();
 });
 
 
+app.delete("/delete", verifyIfExistsAccountCPF, (request, response) => {
+    const { costumer } = request;
 
+    //splice
+    costumers.splice(costumer, 1);
 
+    return response.status(200).json(costumers);
+});
 
 app.listen(3333);
